@@ -1,0 +1,32 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+namespace nv.trace.FB.Provider.NvtxTrace;
+
+// Field ids are wire positions: a V1 in-driver provider parses this very table, so a retired field is
+// deprecated in place and a new one is appended, never inserted.
+table ProviderConfiguration
+{
+    maxStringTableSize : uint64 = 1048576 (deprecated); // The V1 string table's byte size; the registered-string state table replaced it.
+    maxDomainCount : uint32 = 16;
+
+    maxStateChunkPoolCountLog2 : uint32 = 4;
+    maxStateChunkCountPerPool : uint32 = 2048;
+    maxStateChunkSize : uint32 = 256;
+
+    maxPushPopRangePoolCountLog2 : uint32 = 4;
+    maxPushPopRangeCountPerPool : uint32 = 16384;
+    minPushPopRangeInlineMessageSize : uint32 = 128;
+
+    maxStackGroupPoolCountLog2 : uint32 = 4;
+    maxStackGroupCountPerPool : uint32 = 4096;
+    minStackGroupInlineStackRefCount : uint32 = 2;
+
+    maxRegisteredStringCount : uint32 = 8192 (deprecated); // replaced by registeredStringArenaSize
+    minRegisteredStringInlineByteCount : uint32 = 48 (deprecated); // replaced by maxRegisteredStringRecordPayloadSize
+
+    registeredStringArenaSize : uint64 = 1048576;
+    maxRegisteredStringRecordPayloadSize : uint32 = 512;
+}

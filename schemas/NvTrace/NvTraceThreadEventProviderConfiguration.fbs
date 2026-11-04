@@ -1,0 +1,15 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+namespace nv.trace.FB.Provider.ThreadEvent;
+
+table ProviderConfiguration
+{
+    maxThreadCount : uint32 = 1024;
+    circularFifoEntriesPerThread : uint32 = 1024;
+    chunkCount : uint32 = 32768;
+    sizeofChunk : uint64 = 2048;
+    maxSourceProviderCount : uint32 = 16;
+}

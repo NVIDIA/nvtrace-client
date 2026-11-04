@@ -1,0 +1,251 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+include "NvTraceCommonSerializationTypes.fbs";
+include "NvTraceGpuPmCounterProviderConfiguration.fbs";
+include "NvTraceGpuPartitionInfo.fbs";
+
+///////////////////////////////////////////
+// NvTraceService provider events
+
+namespace nv.trace.FB.Codec.NvTraceServiceEvents;
+
+enum EventTypeId : uint32
+{
+    Invalid = 0,
+    SystemCreated,
+    GpuPartitionCreated,
+    GpuPartitionDestroyed,
+    ProcessCreated,
+    ProcessDestroyed,
+    ProviderCreated,
+    ProviderDestroyed,
+    ProviderAttached,
+}
+
+table GpuPartitionCreated
+{
+    /// Unique GPU ID within the lifetime of the nvidia-nsight-perf service.
+    gpuPartitionLuid : LUID (required);
+
+    gpuUuid : UUID (required);
+
+    /// Timestamp of GPU partition creation event
+    creationTimestampTsc : uint64 = 0;
+
+    gpuPartitionInfo : [ubyte] (nested_flatbuffer: "nv.trace.FB.GpuPartitionInfo", required);
+}
+
+table GpuPartitionDestroyed
+{
+    /// Unique GPU ID within the lifetime of the nvidia-nsight-perf service.
+    uniqueGpuPartitionLuid : LUID (required);
+
+    /// Timestamp of GPU partition destruction event
+    destructionTimestampTsc : uint64 = 0;
+}
+
+table ProcessCreated
+{
+    /// Unique processId within the lifetime of the nvidia-nsight-perf service.
+    uniqueProcessId : LUID (required);
+    /// The namespace process ID. If the process resides in a container, this is the "virtualized" process ID within the container.
+    namespacePid : int32 = 0;
+    /// The namespace process ID. If the process resides in a container, this is the "virtualized" process ID within the container.
+    namespaceParentPid : int32 = 0;
+
+    /// Path to the process executable.
+    path : string;
+
+    /// Host PID observed by the Service. 0 => correlation falls back to namespacePid.
+    globalPid : int32 = 0;
+
+    /// PID namespace identity observed by the Service. For display (disambiguates equal namespace
+    /// PIDs across containers), not correlation. Null if unavailable.
+    pidNamespaceId : LinuxNamespaceId;
+
+    /// Timestamp of process creation event.
+    creationTimestampTsc : uint64 = 1;
+}
+
+table ProcessDestroyed
+{
+    /// Unique processId within the lifetime of the nvidia-nsight-perf service.
+    uniqueProcessId : LUID (required);
+
+    /// Timestamp of process destruction event.
+    destructionTimestampTsc : uint64 = 0xFFFFFFFFFFFFFFFF;
+}
+
+table ProviderCreated
+{
+    /// Unique provider ID within the lifetime of the nvidia-nsight-perf service.
+    providerLuid : LUID (required);
+
+    /// The parent LUID, which represents either a GpuPartition or Process.
+    /// In other words, either a uniqueGpuPartitionLuid or uniqueProcessId.
+    parentLuid : LUID (required);
+
+    /// The provider's type ID, as a UUID.
+    providerTypeUuid : UUID (required);
+
+    /// The provider's name.  For DFD only.
+    providerName : string;
+
+    /// FlatBuffer configuration
+    configuration : [ubyte];
+
+    /// Event version info
+    eventVersionInfo : [ubyte];
+    eventVersionInfoMinorVersion : uint32 = 0;
+}
+
+table ProviderDestroyed
+{
+    providerLuid : LUID (required);
+}
+
+table ProviderAttached
+{
+    providerLuid : LUID (required);
+    onAttachRecordLocations : [uint64];
+}
+
+///////////////////////////////////////////
+// GPU PM Counter Provider Events
+
+namespace nv.trace.FB.Codec.GpuPmCountersEvents;
+
+enum EventTypeId : uint32
+{
+    Invalid = 0,
+    /// The initial state is populated on attach.
+    AttachState,
+    ProviderDiagnostic,
+    /// One sample, containing both the raw counters (part of a Perf SDK CounterData), and evaluated metrics (doubles).
+    CountersSample,
+    LifecycleEvent,
+}
+
+table AttachStateMajorPayload
+{
+    /// The configuration that the provider is operating on.
+    /// Contains the metricsToConfigure and metricsToEvaluate.
+    providerConfiguration : [ubyte] (nested_flatbuffer: "nv.trace.FB.Provider.GpuPmCounters.ProviderConfiguration");
+
+    /// The "file header" for an Nsight Perf SDK CounterData.
+    /// Individual samples are to be appended onto this before metrics evaluation.
+    counterDataPreamble : [uint8];
+
+    /// The size of each sample to be appended onto counterDataPreamble.
+    /// During post-processing: Useful for presizing buffers.
+    sizeofRangeData : uint64 = 0;
+
+    /// The size of each sample's evaluated metrics.  Should be equal to metricsToEvaluate.size() * sizeof(uint64_t).
+    /// During post-processing: Useful for presizing buffers.
+    sizeofMetricValues : uint64 = 0;
+}
+
+table ProviderDiagnostic
+{
+    sequenceId : uint64 = 0;
+    providerDiagnosticEventType : uint32 = 0;
+    timestampTsc : uint64 = 0;
+
+    initializationFailureReason : uint32 = 0;
+}
+
+struct CountersSampleInlinePayload
+{
+    /// The sequenceId for this event; useful for detecting dropped samples.
+    sequenceId : uint64 = 0;
+    /// The end timestamp for the sample's interval, in the GPU's wall-time clock domain.
+    endTimestampGpuNsec : uint64 = 0;
+    /// The end timestamp for the sample's interval, in the CPU's TSC clock domain.
+    endTimestampTsc : uint64 = 0;
+}
+
+table CountersSampleMajorPayload
+{
+    /// An opaque blob representing one Nsight Perf SDK CounterData sample.
+    /// During post-processing: To be appended onto counterDataPreamble.
+    rangeData : [uint8];
+
+    /// An array of metric values, 1:1 with metricsToEvaluate.
+    evaluatedMetrics : [double];
+}
+
+table LifecycleEventMajorPayload
+{
+    sequenceId : uint64 = 0;
+    lifecycleEventType : uint32 = 0;
+    timestampTsc : uint64 = 0;
+
+    pauseReason : uint32 = 0;
+    resumePhase : uint32 = 0;
+    retryCount : uint32 = 0;
+    resumeFailureReason : uint32 = 0;
+}
+
+///////////////////////////////////////////
+// GPU Clock Calibration Provider Events
+
+namespace nv.trace.FB.Codec.GpuClockCalibrationEvents;
+
+enum EventTypeId : uint32
+{
+    /// A single TSC-to-GPU calibration point.
+    CalibrationPoint,
+}
+
+
+///////////////////////////////////////////
+// GPU Hw Trace Provider Events
+
+namespace nv.trace.FB.Codec.GpuHwTraceEvents;
+
+// These values MUST stay numerically identical to the NvTrace_GPU_HwTrace_RecordType circular-buffer record types
+// (nvtrace_gpu_hw_trace.h): the record type is forwarded verbatim as the codec event type id. FlatBuffers cannot
+// reference the C enum, so if you renumber NvTrace_GPU_HwTrace_RecordType you must update these by hand. Drift is
+// caught at build time by static_asserts in the TSF/IB event encoder headers comparing this enum's generated
+// form against NvTrace_GPU_HwTrace_RecordType.
+enum EventTypeId : uint32
+{
+    Invalid = 0,
+    ProviderDiagnostic_InitializationFailure = 3,
+    ComputeGridStart = 4,
+    ComputeGridEnd = 5,
+    ContextChangeLoad = 6,
+    ContextChangeSave = 7,
+    ComputeGridNullEnd = 10,
+}
+
+
+///////////////////////////////////////////
+// Thread Event
+
+namespace nv.trace.FB.Codec.ThreadLifetimeEvents;
+
+// ThreadCreated and ThreadDestroyed MUST stay numerically identical to their NvTrace_ThreadEvent_RecordType
+// values (nvtrace_thread_event.h): the consumer forwards the provider's record type and struct verbatim.
+// FlatBuffers cannot reference the C enum; static_asserts in NvTraceThreadEventEncoders.h catch drift.
+enum EventTypeId : uint32
+{
+    Invalid = 0,
+
+    /// Provider ID mapping: a ThreadEvent provider ID was mapped to a provider.
+    ProviderMapped = 3,
+    /// Object lifetime: a traced thread was created. Payload: NvTrace_ThreadEvent_ThreadCreated.
+    ThreadCreated = 7,
+    /// Object lifetime: a traced thread was destroyed. Payload: NvTrace_ThreadEvent_ThreadDestroyed; the
+    /// inline payload carries the thread's uniqueThreadId.
+    ThreadDestroyed = 8,
+}
+
+table ProviderMapped
+{
+    providerMappingId : uint32 = 0;
+    mappedProviderLuid : LUID (required);
+}

@@ -1,0 +1,47 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+include "NvTraceCommonSerializationTypes.fbs";
+
+namespace nv.trace.FB;
+
+enum DriverType : uint8
+{
+    INVALID,
+    RmKernelDriver,
+    MrmKernelDriver
+}
+
+table CudaAttributeValueS32
+{
+    value : int32 = 0;
+}
+
+union CudaAttributeValue
+{
+    s32 : CudaAttributeValueS32
+}
+
+table CudaAttribute
+{
+    key : uint32 = 0;
+    value : CudaAttributeValue;
+}
+
+table GpuPartitionInfo
+{
+    chipName : string (required);
+    deviceName : string (required);
+
+    driverVersion : SemVer;
+    driverType : DriverType;
+
+    supportedProviders : [UUID] (required);
+    cudaAttributes : [CudaAttribute] (required);
+
+    deviceMemorySize : uint64 = 0;
+
+    isProfiled : bool = false;
+}

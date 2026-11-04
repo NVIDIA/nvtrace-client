@@ -1,0 +1,14 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+namespace nv.trace.FB.Provider.CpuClockCalibration;
+
+table ProviderConfiguration
+{
+    /// Number of cells in the circular buffer.
+    circularBufferCellCount : uint32 = 128;
+    /// The targeted update interval. The provider should achieve this on average.
+    updateIntervalNsec : uint64 = 1000000000; // default to 1 second
+}

@@ -1,0 +1,14 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+namespace nv.trace.FB.Provider.GpuGrCtxTrace;
+
+table ProviderConfiguration
+{
+    // For driver > R545+, RM teams has increased the poll rate to 30 Hz and the ucode buffer size to 512 events...
+    // We will be able to handle close to 7680 context switches per second per GPU.
+    circularBufferCellCount : uint32 = 6144; // 30 Hz (poll rate) * 512 (ucode buffer size) / 10 (Hz) * 4 (Quad buffering)
+    updateIntervalNsec : uint64 = 100000000;
+}

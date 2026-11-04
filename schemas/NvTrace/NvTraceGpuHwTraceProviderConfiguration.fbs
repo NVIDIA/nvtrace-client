@@ -1,0 +1,25 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+namespace nv.trace.FB.Provider.GpuHwTrace;
+
+table ProviderConfiguration
+{
+    /// Number of cells in the circular buffer.
+    circularBufferCellCount : uint32 = 524288;  // 512 * 1024
+    /// The targeted update interval. The provider should achieve this on average.
+    updateIntervalNsec : uint64 = 100000000;    // 100ms (NanosecondsPerSecond / 10)
+    /// The time needed for GPU writes to settle, before the CPU can safely read them.
+    readbackHoldoffNsec : uint32 = 10000000;    // 10ms
+    /// Whether to include internal (driver-generated) HW trace events.
+    /// Can also be overridden by the NVTRACE_GPU_HW_TRACE_SHOW_INTERNAL_EVENTS environment variable.
+    showInternalEvents : bool = true;
+    /// Whether the PerfWorks record buffer uses flight-recorder mode (overwrites oldest when full).
+    keepLatest : bool = true;
+    /// Size in bytes of the PerfWorks record buffer (separate from circularBufferCellCount).
+    recordBufferSize : uint32 = 4194304;  // 4 MB
+    /// Whether to allow the PerfWorks provider to drop events under pressure.
+    allowLossyProvider : bool = false;
+}

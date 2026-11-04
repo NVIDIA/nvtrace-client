@@ -1,0 +1,46 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+namespace nv.trace.FB;
+
+///////////////////////////////////////////
+// Common NvTrace types.
+
+struct UUID
+{
+    bytes : [uint8:16];
+}
+
+struct LUID
+{
+    value : uint64;
+}
+
+struct PID
+{
+    value : uint32;
+}
+
+/// Identity of a Linux namespace: the (device, inode) of /proc/<pid>/ns/<type>. Both 0 if unavailable.
+struct LinuxNamespaceId
+{
+    inode : uint64;
+    device : uint64;
+}
+
+table SemVer
+{
+    majorVer : uint32 = 0;
+    minorVer : uint32 = 0;
+    patchVer : uint32 = 0;
+}
+
+struct TscRtcCalibrationPoint
+{
+    tscTick : uint64;
+    utcNsec : uint64;
+    tscToUtcFactor : double;
+    utcToTscFactor : double;
+}

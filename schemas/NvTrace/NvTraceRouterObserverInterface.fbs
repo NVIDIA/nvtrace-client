@@ -1,0 +1,151 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+include "NvTraceCommonSerializationTypes.fbs";
+
+namespace nv.trace.FB.RouterObserverInterface;
+
+
+enum RequestType : uint32
+{
+    BeginObserverClientSession = 0x1000,
+    DeclareAccessibleGpus
+}
+
+table ProviderTypeFilter
+{
+    providerTypeUuids : [UUID];
+}
+
+table GpuPartitionFilter
+{
+    gpuPartitionUuids : [UUID];
+}
+
+table ProcessFilter
+{
+    pids : [PID];
+}
+
+/// OS-reachable GPUs, named as a range of the carrying message's object identifiers (one per GPU). The Router resolves
+/// them to UUIDs itself and intersects with the security policy. Re-sending only adds to what the client already proved,
+/// as access is never revoked; objects that become visible arrive as created notifications, parent before child.
+/// Linux only for now: Windows exposes no per-GPU OS object to prove access with, so the policy alone confines a session.
+table DeclareAccessibleGpusRequest
+{
+    firstGpuIdentifierIndex : uint32 = 0xFFFFFFFF;
+    gpuIdentifierCount : uint32 = 0;
+}
+
+table BeginObserverClientSessionRequest
+{
+    providerTypeFilter : ProviderTypeFilter;
+    gpuPartitionFilter : GpuPartitionFilter;
+    processFilter : ProcessFilter;
+
+    /// Declares the GPUs along with the session, sparing the client a second message.
+    declareAccessibleGpusRequest : DeclareAccessibleGpusRequest;
+}
+
+
+enum ResponseType : uint32
+{
+    BeginObserverClientSession = 0x2000
+}
+
+table BeginObserverClientSessionResponse
+{
+    success : bool = false;
+    maxGpuPartitionCount : uint32 = 0;
+    maxProcessCount : uint32 = 0;
+    maxProviderCount : uint32 = 0;
+    initialTscRtcCalibrationPoint : TscRtcCalibrationPoint;
+}
+
+
+enum NotificationType : uint32
+{
+    InitialStateSent = 0x3000,
+    SystemCreated,
+    GpuPartitionCreated,
+    GpuPartitionDestroyed,
+    ProcessCreated,
+    ProcessDestroyed,
+    ProviderCreated,
+    ProviderDestroyed
+}
+
+table InitialStateSentNotification
+{
+}
+
+table SystemCreatedNotification
+{
+    infoMemoryIdentifierIndex : uint32 = 0xFFFFFFFF;
+    infoSize : uint64 = 0;
+}
+
+table GpuPartitionCreatedNotification
+{
+    gpuPartitionLuid : LUID (required);
+
+    gpuUuid : UUID (required);
+
+    creationTimestampTsc : uint64 = 0;
+
+    infoMemoryIdentifierIndex : uint32 = 0xFFFFFFFF;
+    infoSize : uint64 = 0;
+}
+
+table GpuPartitionDestroyedNotification
+{
+    gpuPartitionLuid : LUID (required);
+
+    destructionTimestampTsc : uint64 = 0;
+}
+
+table ProcessCreatedNotification
+{
+    processLuid : LUID (required);
+
+    /// Namespace PID (virtualized inside a container); does not match the host PID.
+    namespacePid : PID (required);
+
+    /// Host PID from the Router's SO_PEERCRED. Null if unobtainable; consumers fall back to namespacePid.
+    globalPid : PID;
+
+    /// PID namespace identity of the connecting target, observed by the Router. For display
+    /// (disambiguates equal namespace PIDs across containers), not correlation. Null if unavailable.
+    pidNamespaceId : LinuxNamespaceId;
+
+    creationTimestampTsc : uint64 = 1;
+}
+
+table ProcessDestroyedNotification
+{
+    processLuid : LUID (required);
+
+    destructionTimestampTsc : uint64 = 0;
+}
+
+table ProviderCreatedNotification
+{
+    providerLuid : LUID (required);
+    parentLuid : LUID;
+
+    providerTypeUuid : UUID (required);
+    providerName : string;
+
+    providerBufferMemoryIdentifierIndex : uint32 = 0xFFFFFFFF;
+    providerBufferSize : uint64 = 0;
+}
+
+table ProviderDestroyedNotification
+{
+    providerLuid : LUID (required);
+    parentLuid : LUID;
+
+    providerTypeUuid : UUID (required);
+}

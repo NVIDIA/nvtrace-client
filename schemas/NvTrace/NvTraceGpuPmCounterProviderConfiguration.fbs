@@ -1,0 +1,209 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+namespace nv.trace.FB.Provider.GpuPmCounters;
+
+/// A metric to send to NVPW_RawCounterConfiguration.
+/// In YAML, an element of metricsToConfigure may be either a bare string (the metricName, with keepInstances defaulting to false)
+/// or a map with explicit metricName and keepInstances fields.
+table MetricToConfigure
+{
+    metricName : string;
+
+    /// When true, per-instance counter values for this metric are retained in the counter data.
+    keepInstances : bool = false;
+
+    /// Superseded by Architecture.timeline. No longer written, but kept readable and holding their vtable
+    /// slots so a trace captured before the timeline section still labels and groups its rows.
+    displayName : string;
+    category : string;
+}
+
+/// One dimensional quantity of a timeline metric, with the label the set gave it.
+table TimelineSubMetric
+{
+    /// Label for this quantity, for example "Throughput %". Not unique on its own; it reads under the
+    /// metric's display name.
+    name : string;
+
+    /// Appended to the metric's baseId to form the PerfWorks name.
+    suffix : string;
+
+    multiplier : double = 1.0;
+    maxValue : double = 0.0;
+
+    /// The counter this sub-metric resolves to, as the library computed it. A sub-metric may be based on a
+    /// different metric than its parent, so joining the parent's baseId with the suffix does not always
+    /// reproduce it. Empty in traces written before this field.
+    fullId : string;
+}
+
+/// A metric as the timeline draws it: one display name covering every sub-metric beneath it.
+/// Deliberately not MetricToConfigure, which is one fully qualified PerfWorks name per sub-metric.
+/// Merging them would conflate what is programmed with what is drawn.
+table TimelineMetric
+{
+    name : string;
+    baseId : string;
+    description : string;
+    color : string;
+    subMetrics : [TimelineSubMetric];
+}
+
+/// How a row combines the metrics drawn on it.
+enum TimelineAggregationOp : byte
+{
+    Max = 0,
+    Sum = 1
+}
+
+/// How a row stacks the metrics drawn on it.
+enum TimelineRowType : byte
+{
+    Overlay = 0,
+    Stacked = 1
+}
+
+/// What a row draws. Named because rows reference groups rather than repeating their members.
+table TimelineMetricGroup
+{
+    name : string;
+    description : string;
+
+    /// Display names, resolving into TimelineConfig.metrics.
+    metricNames : [string];
+
+    aggregationOp : TimelineAggregationOp = Max;
+
+    /// Which sub-metrics of those metrics the group draws, in order. Empty means all of them. A metric
+    /// usually defines more sub-metrics than any one row wants, so this is the group's column selection.
+    subMetricNames : [string];
+}
+
+/// A row in a view. children nest to whatever depth the document declared, so the shape comes from the
+/// set rather than from the reader.
+table TimelineRow
+{
+    /// Resolves into TimelineConfig.metricGroups.
+    metricGroupName : string;
+
+    type : TimelineRowType = Overlay;
+
+    /// Relative row height. Carried as authored; a reader that has no notion of row height ignores it.
+    heightScale : double = 1.0;
+
+    children : [TimelineRow];
+}
+
+/// A named arrangement of rows. A set may carry several to triage different scenarios; a reader that
+/// shows one shows "Default".
+table TimelineView
+{
+    name : string;
+    rows : [TimelineRow];
+}
+
+/// The row hierarchy, versioned on its own so it can change without moving ProviderConfiguration.
+/// Written from what the MetricConfig library resolved, which is the same whether the set declared
+/// timelineViews, metricGroups, per-metric category, or legacy displayRows.
+table TimelineConfig
+{
+    version : uint32 = 1;
+    views : [TimelineView];
+    metricGroups : [TimelineMetricGroup];
+    metrics : [TimelineMetric];
+}
+
+/// A counter-to-LOP-domain assignment a metric set authored for another Nsight tool asks for, so a
+/// single-pass config can be stated rather than discovered. Carried through from MetricConfig's
+/// MetricPass::schedulingHints.
+table SchedulingHint
+{
+    /// NVPW_RawCounterDomain value, resolved from the name MetricConfig carries.
+    domain : uint32;
+
+    /// Raw counter names, in LOP form, to schedule on that domain.
+    counters : [string];
+}
+
+/// One entry of the config's metricConfigs list: which chips it covers, and which document to use for
+/// them. This is the first of two selection steps -- the metric sets inside the document are the second.
+table MetricConfigSelection
+{
+    /// Chip pattern this entry claims. The first entry matching the running chip is the one used.
+    chipRegex : string;
+
+    /// Path of the document. Empty when it was supplied inline.
+    file : string;
+
+    /// The document itself, as authored. Carried so a trace read long after capture describes the metric
+    /// set in the author's terms -- groups, timeline views, aggregation -- without the reader needing the
+    /// file, which may be gone or may have changed. The fields acted on are resolved into Architecture
+    /// above; this is the record of where they came from.
+    document : string;
+}
+
+// Per-Architecture configuration settings
+table Architecture
+{
+    chipRegex : string;
+
+    /// These metrics will be sent to NVPW_RawCounterConfiguration
+    metricsToConfigure : [MetricToConfigure];
+
+    /// These metrics will be evaluated in real time by the provider.
+    /// It is strongly recommended for these to be a subset of metricsToConfigure.
+    metricsToEvaluate : [string];
+
+    /// Counter-to-domain assignments the metric set asks for, applied before default scheduling so a
+    /// set authored for one pass is scheduled as one pass rather than rediscovered.
+    schedulingHints : [SchedulingHint];
+
+    /// Index into metricConfigSelections of the entry this came from, or -1 when it came from
+    /// architectures[]. That entry's chipRegex has to match as well, so a document cannot cover chips
+    /// the entry selecting it never claimed.
+    metricConfigIndex : int32 = -1;
+
+    /// How this set's metrics are grouped into rows. Absent for architectures[], which states no rows.
+    timeline : TimelineConfig;
+
+    /// The set's custom metric definitions, rendered as the script the counter library's user-defined
+    /// metrics feature takes. Registered before any metric is added, since metricsToConfigure may name
+    /// one. Empty when the set defines none.
+    customMetricsScript : string;
+}
+
+table ProviderConfiguration
+{
+    /// GPU sampling frequency; this many samples will be produced per second.
+    pmSampleRateHz : uint32 = 1000;
+
+    /// The interval at which samples will be pulled from the HW buffer into the provider buffer.
+    /// This dictates the latency at which samples will be made available.
+    updateIntervalNsec : uint64 = 100000000; // default to 10Hz
+
+    /// An additional safe margin of latency before HW samples are read into SW buffers.
+    /// This adds onto the latency at which samples will be made available.
+    readbackHoldoffNsec : uint64 = 10000000; // default to 10 milliseconds
+
+    /// Selects the record buffer's append mode: KEEP_LATEST when true, KEEP_OLDEST when false.
+    /// KEEP_LATEST is the mode to run in; KEEP_OLDEST costs more in hardware and exists only for drivers
+    /// whose HWPM shutdown path did not tolerate KEEP_LATEST.
+    keepLatest : bool = true;
+
+    architectures : [Architecture];
+
+    /// The metricConfigs entries, in the order they were written. Empty when architectures[] was used.
+    /// Kept even when a document resolved nothing, because that is exactly when a chip matching no entry
+    /// has to be reported against the document the operator went and wrote.
+    metricConfigSelections : [MetricConfigSelection];
+
+    /// Per-GPU sample buffer history, in milliseconds. 0 signifies a
+    /// built-in default of 402 ms (sized for a ~100 ms read cadence at
+    /// default config). Raise for slower consumers — e.g. 1300 ms for
+    /// a once-per-second consumer. See "Sizing the GPU PM counter
+    /// buffer" in the SDK README for the formula.
+    maxHistoryDurationMsec : uint32 = 0;
+}

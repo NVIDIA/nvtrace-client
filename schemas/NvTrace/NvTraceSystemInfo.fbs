@@ -1,0 +1,35 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+include "NvTraceCommonSerializationTypes.fbs";
+
+namespace nv.trace.FB;
+
+enum OsFamily : uint8
+{
+    INVALID,
+    Linux,
+    Windows
+}
+
+enum CpuArch : uint8
+{
+    INVALID,
+    x64,
+    aarch64
+}
+
+table SystemInfo
+{
+    hostname : string (required);
+    osVersion : string (required);
+    osFamily : OsFamily;
+    cpuModel : string (required);
+    cpuArch : CpuArch;
+    sysMemTotal : uint64 = 0;
+    nvidiaRmKernelDriverVersion : SemVer;
+    nvidiaMrmKernelDriverVersion : SemVer;
+    serviceStartTimestampTsc : uint64 = 0;
+}

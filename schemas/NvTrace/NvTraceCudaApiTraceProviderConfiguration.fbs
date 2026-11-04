@@ -1,0 +1,101 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+namespace nv.trace.FB.Provider.CudaApiTrace;
+
+enum CudaApiCategory : uint16
+{
+    Invalid = 0,
+    Actions,
+    Setup,
+    Initialization,
+    Resource,
+    MemoryAllocation,
+    Synchronization,
+    Query,
+    Getters,
+    Setters,
+}
+
+enum CudaApiModule : uint16
+{
+    Invalid = 0,
+    ContextManagement,
+    CoredumpAttributesControlAPI,
+    CUDACheckpointing,
+    DeviceManagement,
+    Direct3D9Interoperability,
+    Direct3D10Interoperability,
+    Direct3D11Interoperability,
+    DriverEntryPointAccess,
+    EGLInteroperability,
+    ErrorHandling,
+    ErrorLogManagementFunctions,
+    EventManagement,
+    ExecutionControl,
+    ExternalResourceInteroperability,
+    GraphicsInteroperability,
+    GraphManagement,
+    GreenContexts,
+    LibraryManagement,
+    Initialization,
+    MemoryManagement,
+    ModuleManagement,
+    MulticastObjectManagement,
+    Occupancy,
+    OpenGLInteroperability,
+    PeerContextMemoryAccess,
+    PrimaryContextManagement,
+    ProfilerControl,
+    StreamManagement,
+    StreamMemoryOperations,
+    StreamOrderedMemoryAllocator,
+    SurfaceObjectManagement,
+    SurfaceReferenceManagement,
+    TensorMapObjectManagement,
+    TextureObjectManagement,
+    TextureReferenceManagement,
+    UnifiedAddressing,
+    VDPAUInteroperability,
+    VersionManagement,
+    VirtualMemoryManagement,
+}
+
+enum CudaApiFirewallOp : uint16
+{
+    Invalid = 0,
+    Include,
+    Exclude,
+    Accept,
+    Reject
+}
+
+table CudaApiFirewallRule
+{
+    firewallOp : CudaApiFirewallOp = Invalid;
+    cudaApiCategories : [CudaApiCategory];
+    cudaApiModules : [CudaApiModule];
+    cudaApiNameContains : [string];
+}
+ 
+table ProviderConfiguration
+{
+    maxContextCount : uint64 = 64;
+    maxStreamCount : uint64 = 1024;
+    maxModuleCount : uint64 = 1024;
+    maxFunctionCount : uint64 = 4096; // intentionally small for now
+    maxGraphExecCount : uint64 = 64;
+    maxGraphNodeCount : uint64 = 256;
+    maxStringTableEntries : uint64 = 16384;
+    sizeofStringTableData : uint64 = 1048576;
+    maxStringTableEntryLength : uint64 = 32768;
+    traceRuntimeApiCalls : bool = false;
+    driverApiTraceFirewall : [CudaApiFirewallRule];
+    gpuTimestampChunkCoolingWindowMsec : uint64 = 400;
+    gpuTimestampFifoCellsPerStream : uint64 = 820;
+    gpuTimestampChunksCount : uint64 = 2868;
+    gpuTimestampReportsPerChunk : uint64 = 1024;
+    gpuTimestampMaxChunkReleasedPerAlloc : uint64 = 8;
+}
