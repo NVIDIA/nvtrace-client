@@ -92,6 +92,12 @@ namespace nv::trace {
             return m_pState->currentEndSequenceNumber - m_readSequenceNumber;
         }
 
+        // The sequence number of the next record to consume.
+        uint64_t NextReadSequenceNumber() const
+        {
+            return m_readSequenceNumber;
+        }
+
         uint64_t LastUpdateTsc() const
         {
             return m_pState->lastUpdateTsc;

@@ -411,6 +411,7 @@ namespace nv::trace {
                     m_currentChunkRef = std::exchange(rhs.m_currentChunkRef, NvTrace_ChunkRef_V1{NVTRACE_INVALID_CHUNK_REF_VALUE_V1});
                     m_pCurrentChunkHeader = std::exchange(rhs.m_pCurrentChunkHeader, nullptr);
                     m_currentChunkRecordCount = std::exchange(rhs.m_currentChunkRecordCount, 0);
+                    m_currentChunkIncomplete = std::exchange(rhs.m_currentChunkIncomplete, false);
                     m_pNextRecordReadPos = std::exchange(rhs.m_pNextRecordReadPos, nullptr);
                     m_pEndRecordReadPos = std::exchange(rhs.m_pEndRecordReadPos, nullptr);
                     m_pNextPayloadReadPos = std::exchange(rhs.m_pNextPayloadReadPos, nullptr);
@@ -452,22 +453,14 @@ namespace nv::trace {
             void ConsumeRecords(uint64_t readEndpointTsc, TFN_ReadRecord&& fnReadRecord, TFN_CommitRecord&& fnCommitRecord)
             {
                 const uint64_t cellReadEndSequenceNumber = m_cellReader.AcquireCurrentEndSequenceNumber();
-                while (true)
-                {
-                    if (IsCurrentChunkPartiallyWritten())
-                    {
-                        RefreshCurrentChunkRecordCount();
-                        if (m_currentChunkRecordCount != 0)
-                        {
-                            m_pEndRecordReadPos = GetCurrentChunkPtr() + m_chunkHeaderSize + CurrentChunkRecordCount() * m_recordSize;
-                        }
-                        else
-                        {
-                            m_pNextRecordReadPos = nullptr;
-                            m_pEndRecordReadPos = nullptr;
-                        }
-                    }
 
+                if (m_currentChunkIncomplete)
+                {
+                    RefreshCurrentIncompleteChunk(cellReadEndSequenceNumber);
+                }
+
+                do
+                {
                     while (m_pNextRecordReadPos < m_pEndRecordReadPos)
                     {
                         const auto* const pRecord = reinterpret_cast<const NvTrace_ThreadEvent_EventBufferRecord_V1*>(m_pNextRecordReadPos);
@@ -479,62 +472,33 @@ namespace nv::trace {
                         if (m_pNextPayloadReadPos - m_pEndRecordReadPos < static_cast<ptrdiff_t>(alignedPayloadSize))
                         {
                             NVTRACE_LOG_WRN(50, "V1 chunk corruption detected; this implies a chunk overrun.");
-                            m_pNextRecordReadPos = m_pEndRecordReadPos;
+                            AbandonCurrentCell();
                             break;
                         }
 
-                        bool recordAccepted = true;
                         if constexpr (std::is_same_v<std::invoke_result_t<TFN_ReadRecord, uint32_t, uint64_t, uint64_t, const uint8_t*, size_t>, void>)
                         {
                             fnReadRecord(pRecord->recordIdentifier, m_uniqueThreadId, m_nextCorrelationId, m_pNextPayloadReadPos - alignedPayloadSize, payloadSize);
                         }
                         else
                         {
-                            recordAccepted = static_cast<bool>(fnReadRecord(pRecord->recordIdentifier, m_uniqueThreadId, m_nextCorrelationId, m_pNextPayloadReadPos - alignedPayloadSize, payloadSize));
-                        }
-
-                        // Ensure fnReadRecord()'s loads complete before the chunk revision is re-read below.
-                        ReadFence();
-                        const bool consistencyCheckPassed = IsCurrentChunkConsistent();
-                        if (!consistencyCheckPassed)
-                        {
-                            if (recordAccepted)
+                            if (!fnReadRecord(pRecord->recordIdentifier, m_uniqueThreadId, m_nextCorrelationId, m_pNextPayloadReadPos - alignedPayloadSize, payloadSize))
                             {
-                                fnCommitRecord(false);
+                                // A rejected record was not accepted by the consumer, so there is no
+                                // tentative consumer state for fnCommitRecord to resolve. Still perform
+                                // the consistency check so an overrun abandons the source cell normally.
+                                CheckConsistency();
+                                return;
                             }
-                            NVTRACE_LOG_WRN(50, "V1 chunk overrun detected.");
-                            m_pNextRecordReadPos = m_pEndRecordReadPos;
-                            break;
-                        }
-                        if (!recordAccepted)
-                        {
-                            return;
                         }
 
-                        fnCommitRecord(true);
                         m_pNextRecordReadPos += m_recordSize;
                         m_pNextPayloadReadPos -= alignedPayloadSize;
                         m_nextCorrelationId += 1;
+
+                        fnCommitRecord(CheckConsistency());
                     }
-
-                    if (IsCurrentChunkPartiallyWritten() && m_pEndRecordReadPos)
-                    {
-                        break; // Stay on this chunk until it has been finalized.
-                    }
-
-                    if (!ConsumeNextChunk(cellReadEndSequenceNumber, readEndpointTsc))
-                    {
-                        break;
-                    }
-
-                    const uint8_t* const pCurrentChunk = GetCurrentChunkPtr();
-                    m_pNextRecordReadPos = pCurrentChunk + m_chunkHeaderSize;
-                    m_pEndRecordReadPos = pCurrentChunk + m_chunkHeaderSize + CurrentChunkRecordCount() * m_recordSize;
-                    m_pNextPayloadReadPos = pCurrentChunk + m_chunkSize;
-
-                    m_uniqueThreadId = reinterpret_cast<const NvTrace_ThreadEvent_EventBufferChunkHeader_V1*>(pCurrentChunk)->uniqueThreadId;
-                    m_nextCorrelationId = (static_cast<uint64_t>(m_currentChunkRef.chunkIndex) << m_chunkIndexShiftCount) | (static_cast<uint64_t>(m_currentChunkRef.chunkRevision) << m_chunkRevisionShiftCount);
-                }
+                } while (!m_currentChunkIncomplete && ConsumeNextChunk(cellReadEndSequenceNumber, readEndpointTsc));
             }
 
         private:
@@ -570,14 +534,29 @@ namespace nv::trace {
                 return static_cast<size_t>(0 < m_currentChunkRecordCount ? m_currentChunkRecordCount : -m_currentChunkRecordCount);
             }
 
-            bool IsCurrentChunkPartiallyWritten() const
+            bool CheckConsistency()
             {
-                return m_currentChunkRecordCount <= 0;
+                ReadFence();
+                if (m_pCurrentChunkHeader->chunkHeader.chunkRevision == m_currentChunkRef.chunkRevision)
+                {
+                    return true;
+                }
+                else
+                {
+                    NVTRACE_LOG_WRN(50, "V1 chunk overrun detected.");
+                    AbandonCurrentCell();
+                    return false;
+                }
             }
 
-            bool IsCurrentChunkConsistent() const
+            // Drops the rest of the cell, not just this chunk: a successor is reached through a ref read
+            // from a chunk that has since been recycled, and one still sitting unrecycled in the pool
+            // would pass its own revision check and deliver a torn cell's tail.
+            void AbandonCurrentCell()
             {
-                return m_pCurrentChunkHeader->chunkHeader.chunkRevision == m_currentChunkRef.chunkRevision;
+                m_currentChunkIncomplete = false;
+                m_pNextRecordReadPos = m_pEndRecordReadPos;
+                m_currentCellNextChunkRef.value = NVTRACE_INVALID_CHUNK_REF_VALUE_V1;
             }
 
             // A count past the chunk's capacity is corruption the revision check cannot catch;
@@ -588,15 +567,22 @@ namespace nv::trace {
                 return std::clamp(chunkRecordCount, -maxRecordCountInChunk, maxRecordCountInChunk);
             }
 
-            void RefreshCurrentChunkRecordCount()
+            void RefreshCurrentIncompleteChunk(uint64_t cellReadEndSequenceNumber)
             {
-                if (!m_pCurrentChunkHeader)
+                const NvTrace_ChunkRef_V1 nextChunkRef = {LoadAcquire(&m_pCurrentChunkHeader->nextChunkRef.value)};
+                const int32_t chunkRecordCount = m_pCurrentChunkHeader->recordCount;
+                const uint64_t uniqueThreadId = reinterpret_cast<const NvTrace_ThreadEvent_EventBufferChunkHeader_V1*>(m_pCurrentChunkHeader)->uniqueThreadId;
+                if (!CheckConsistency())
                 {
                     return;
                 }
 
-                const int32_t chunkRecordCount = LoadAcquire(&m_pCurrentChunkHeader->recordCount);
-                m_currentChunkRecordCount = IsCurrentChunkConsistent() ? ClampChunkRecordCount(chunkRecordCount) : 0;
+                m_uniqueThreadId = uniqueThreadId;
+                m_currentCellNextChunkRef = nextChunkRef;
+                m_currentChunkIncomplete = nextChunkRef.chunkIndex == NVTRACE_INVALID_CHUNK_INDEX_V1 && cellReadEndSequenceNumber <= m_cellReader.NextReadSequenceNumber();
+
+                m_currentChunkRecordCount = ClampChunkRecordCount(chunkRecordCount);
+                m_pEndRecordReadPos = GetCurrentChunkPtr() + m_chunkHeaderSize + CurrentChunkRecordCount() * m_recordSize;
             }
 
             bool ConsumeNextChunk(uint64_t cellReadEndSequenceNumber, uint64_t readEndpointTsc)
@@ -623,9 +609,9 @@ namespace nv::trace {
                     }
 
                     const auto* const pNextChunkHeader = reinterpret_cast<const NvTrace_AdaptiveBufferChunkHeader_V1*>(m_pChunks + m_currentCellNextChunkRef.chunkIndex * m_chunkSize);
-                    const int32_t nextChunkRecordCount = pNextChunkHeader->recordCount;
-                    const NvTrace_ChunkRef_V1 nextChunkNextChunkRef = {pNextChunkHeader->nextChunkRef.value};
-                    ReadFence();
+                    const NvTrace_ChunkRef_V1 nextChunkNextChunkRef = {LoadAcquire(&pNextChunkHeader->nextChunkRef.value)};
+                    const int32_t nextChunkRecordCount = LoadAcquire(&pNextChunkHeader->recordCount);
+                    // The acquire loads above already order the revision check after them; no ReadFence() is needed.
 
                     if (pNextChunkHeader->chunkHeader.chunkRevision != m_currentCellNextChunkRef.chunkRevision)
                     {
@@ -638,6 +624,15 @@ namespace nv::trace {
                     m_pCurrentChunkHeader = pNextChunkHeader;
                     m_currentChunkRecordCount = ClampChunkRecordCount(nextChunkRecordCount);
                     m_currentCellNextChunkRef.value = nextChunkNextChunkRef.value;
+                    m_currentChunkIncomplete = nextChunkNextChunkRef.chunkIndex == NVTRACE_INVALID_CHUNK_INDEX_V1 && cellReadEndSequenceNumber <= m_cellReader.NextReadSequenceNumber();
+
+                    const uint8_t* const pCurrentChunk = GetCurrentChunkPtr();
+                    m_pNextRecordReadPos = pCurrentChunk + m_chunkHeaderSize;
+                    m_pEndRecordReadPos = pCurrentChunk + m_chunkHeaderSize + CurrentChunkRecordCount() * m_recordSize;
+                    m_pNextPayloadReadPos = pCurrentChunk + m_chunkSize;
+
+                    m_uniqueThreadId = reinterpret_cast<const NvTrace_ThreadEvent_EventBufferChunkHeader_V1*>(pCurrentChunk)->uniqueThreadId;
+                    m_nextCorrelationId = (static_cast<uint64_t>(m_currentChunkRef.chunkIndex) << m_chunkIndexShiftCount) | (static_cast<uint64_t>(m_currentChunkRef.chunkRevision) << m_chunkRevisionShiftCount);
                     return true;
                 }
             }
@@ -657,6 +652,7 @@ namespace nv::trace {
             NvTrace_ChunkRef_V1 m_currentChunkRef = {NVTRACE_INVALID_CHUNK_REF_VALUE_V1};
             const NvTrace_AdaptiveBufferChunkHeader_V1* m_pCurrentChunkHeader = nullptr;
             int32_t m_currentChunkRecordCount = 0;
+            bool m_currentChunkIncomplete = false;
 
             const uint8_t* m_pNextRecordReadPos = nullptr;
             const uint8_t* m_pEndRecordReadPos = nullptr;
