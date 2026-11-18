@@ -73,7 +73,8 @@ namespace nv::trace {
         {
         }
 
-        void Export(const std::filesystem::path& archiveFilePath);
+        // Returns false if the trace could not be written to archiveFilePath.
+        bool Export(const std::filesystem::path& archiveFilePath);
 
     private:
         PerfettoTraceExporterOptions m_options;
@@ -2593,7 +2594,7 @@ namespace nv::trace {
     };
 
     template <typename TTraceReader>
-    inline void PerfettoTraceExporter<TTraceReader>::Export(const std::filesystem::path& archiveFilePath)
+    inline bool PerfettoTraceExporter<TTraceReader>::Export(const std::filesystem::path& archiveFilePath)
     {
         m_writer.SetTimestampOriginUtcNsec(m_dataModel.m_observationStartUtcNsec);
 
@@ -2687,7 +2688,7 @@ namespace nv::trace {
         const bool parentDirectoryReady = EnsureOutputParentDirectoryExists(archiveFilePath);
         if (!parentDirectoryReady)
         {
-            return;
+            return false;
         }
         bool writeSucceeded = false;
         if (m_options.enableTraceArchive)
@@ -2702,6 +2703,7 @@ namespace nv::trace {
         {
             NVTRACE_LOG_ERR(100, "Failed to write Perfetto trace archive: %s", archiveFilePath.string().c_str());
         }
+        return writeSucceeded;
     }
 
 } // namespace nv::trace
