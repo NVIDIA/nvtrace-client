@@ -1232,12 +1232,15 @@ namespace nv::trace {
                 return;
             }
             workFrame.secondaryNodeIndex = componentNodeIndex;
+            // A leading <substitution> is already a candidate, also when <template-args> follow it.
+            const bool reusedSubstitutionPrefix = (workFrame.flags & ParseFlagHadPrefix) == 0
+                                               && (workFrame.flags & ParseFlagFromSubstitution) != 0;
             if (PeekInput() == 'I')
             {
                 const NodeIndex templatePrefixNodeIndex = workFrame.nodeIndex == kInvalidNodeIndex
                                                             ? componentNodeIndex
                                                             : AddQualifiedNode(workFrame.nodeIndex, componentNodeIndex);
-                if (templatePrefixNodeIndex == kInvalidNodeIndex || !AddSubstitution(templatePrefixNodeIndex))
+                if (templatePrefixNodeIndex == kInvalidNodeIndex || (!reusedSubstitutionPrefix && !AddSubstitution(templatePrefixNodeIndex)))
                 {
                     CompleteParseWorkFrame(kInvalidNodeIndex);
                     return;
@@ -1253,8 +1256,6 @@ namespace nv::trace {
                 CompleteParseWorkFrame(kInvalidNodeIndex);
                 return;
             }
-            const bool reusedSubstitutionPrefix = (workFrame.flags & ParseFlagHadPrefix) == 0
-                                               && (workFrame.flags & ParseFlagFromSubstitution) != 0;
             if (PeekInput() != 'E' && !reusedSubstitutionPrefix && !AddSubstitution(workFrame.nodeIndex))
             {
                 CompleteParseWorkFrame(kInvalidNodeIndex);
@@ -1650,7 +1651,14 @@ namespace nv::trace {
             }
             if (workFrame.stage == SubstitutionSuffixComplete)
             {
-                FinishParsedType(workFrame, AddQualifiedNode(workFrame.nodeIndex, workFrame.childResult));
+                // Unlike a bare <substitution>, St <unqualified-name> is a new <unscoped-name>, so it is a
+                // substitution candidate; any template-id built from it is added below.
+                const NodeIndex nameNodeIndex = AddQualifiedNode(workFrame.nodeIndex, workFrame.childResult);
+                if (nameNodeIndex != kInvalidNodeIndex)
+                {
+                    AddSubstitution(nameNodeIndex);
+                }
+                FinishParsedType(workFrame, nameNodeIndex);
                 return;
             }
             if (workFrame.stage == GeneralTypeComplete)
@@ -1662,7 +1670,8 @@ namespace nv::trace {
             {
                 const NodeIndex typeNodeIndex = workFrame.childResult;
                 const char originalTypeCode = static_cast<char>(workFrame.savedValue);
-                if (typeNodeIndex != kInvalidNodeIndex && originalTypeCode != 'S' && originalTypeCode != 'Z')
+                // A template-id is a new substitution candidate even when its template name came from a <substitution>.
+                if (typeNodeIndex != kInvalidNodeIndex && originalTypeCode != 'Z')
                 {
                     AddSubstitution(typeNodeIndex);
                 }
